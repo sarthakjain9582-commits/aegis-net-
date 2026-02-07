@@ -1,1 +1,7 @@
-# Requirements for Drone Landing Detection System\n\n# Add your Python dependencies below\n\n# Example dependencies:\nnumpy\npandas\nscikit-learn\ntensorflow\n
+opencv-python
+flask
+matplotlib
+plotly
+pillow
+numpy
+scikit-image
