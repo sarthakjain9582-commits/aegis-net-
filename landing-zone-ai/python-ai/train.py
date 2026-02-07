@@ -98,10 +98,23 @@ def train(args):
 
     # Loss & Optimizer (Custom Variance-Penalized BCE)
     criterion = VariancePenalizedBCELoss(bce_weight=1.0, variance_weight=0.1)
-    # Only optimize parameters that require gradients
-    optimizer = optim.Adam(filter(lambda p: p.requires_grad, model.parameters()), lr=args.lr)
+    
+    # AdamW Optimizer (better weight decay handling than Adam)
+    optimizer = optim.AdamW(
+        filter(lambda p: p.requires_grad, model.parameters()), 
+        lr=args.lr,
+        weight_decay=0.01
+    )
+    
+    # Cosine Annealing LR Scheduler
+    scheduler = optim.lr_scheduler.CosineAnnealingLR(
+        optimizer, 
+        T_max=args.epochs,  # Full cycle over all epochs
+        eta_min=1e-6        # Minimum LR
+    )
 
     print(f"Starting training for {args.epochs} epochs...")
+    print(f"Optimizer: AdamW | Scheduler: CosineAnnealingLR")
 
     for epoch in range(args.epochs):
         model.train()
@@ -153,7 +166,11 @@ def train(args):
         
         avg_train_loss = train_loss / len(train_loader)
         avg_val_loss = val_loss / len(val_loader)
-        print(f"Epoch {epoch+1}: Train Loss: {avg_train_loss:.4f}, Val Loss: {avg_val_loss:.4f}")
+        current_lr = scheduler.get_last_lr()[0]
+        print(f"Epoch {epoch+1}: Train Loss: {avg_train_loss:.4f}, Val Loss: {avg_val_loss:.4f}, LR: {current_lr:.2e}")
+        
+        # Step the scheduler (cosine annealing)
+        scheduler.step()
         
         # Save Checkpoint
         os.makedirs(args.save_dir, exist_ok=True)
