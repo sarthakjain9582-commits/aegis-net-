@@ -15,7 +15,10 @@ An AI-powered system for analyzing aerial imagery to identify safe landing zones
 - Python 3.9+
 - MongoDB
 
-### Installation
+### Prerequisites & Setup
+**See [PREREQUISITES.md](./PREREQUISITES.md) for a detailed guide on setting up the environment without Docker.**
+
+### Quick Start (Manual)
 
 1. Client
 \`\`\`bash
