@@ -4,59 +4,76 @@ import numpy as np
 from .preprocessing import preprocess_image
 from .heatmap import generate_heatmap
 from config import Config
-from models.unet_resnet import ResNetUNet
+from models.yolov8_landing import YOLOv8LandingZone, YOLOv8SegmentationWrapper
 
 class InferenceService:
-    def __init__(self):
-        self.model = ResNetUNet(n_class=1)
-        if os.path.exists(Config.MODEL_PATH):
-           self.model.load_state_dict(torch.load(Config.MODEL_PATH, map_location=torch.device('cpu')))
-           print("Model loaded successfully.")
+    def __init__(self, use_wrapper=True):
+        """
+        Initialize inference service.
+        
+        Args:
+            use_wrapper: If True, use YOLO's built-in segmentation (simpler).
+                        If False, use custom YOLOv8LandingZone model.
+        """
+        self.use_wrapper = use_wrapper
+        
+        if use_wrapper:
+            # Use YOLOv8 segmentation directly
+            self.model = YOLOv8SegmentationWrapper()
+            print("YOLOv8 Segmentation Wrapper loaded.")
         else:
-           print("Warning: Model weights not found. Running with random weights.")
-        self.model.eval()
+            # Use custom model with trained weights
+            self.model = YOLOv8LandingZone(pretrained=True)
+            model_path = Config.MODEL_PATH.replace('landing_model.pth', 'yolo_landing.pth')
+            if os.path.exists(model_path):
+                self.model.load_state_dict(torch.load(model_path, map_location='cpu'))
+                print("Custom YOLOv8 model loaded.")
+            else:
+                print("Warning: Custom weights not found, using pretrained.")
+            self.model.eval()
 
     def predict(self, image_file, mc_samples=10):
         """
-        Runs Monte Carlo Dropout inference.
-        Returns:
-            - heatmapUrl: path to saved visualized heatmap
-            - score: single float confidence score
-            - stats: dictionary with detailed metrics
+        Runs inference with uncertainty estimation.
+        Works with both YOLOv8 wrapper and custom model.
         """
-        # Preprocess
-        input_tensor = preprocess_image(image_file) # (1, 3, 256, 256)
+        from PIL import Image
+        import cv2
         
-        # MC Dropout Loop
-        predictions = []
-        self.model.train() # Enable Dropout
+        # Load image
+        if isinstance(image_file, str):
+            image = cv2.imread(image_file)
+            image = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
+        elif hasattr(image_file, 'read'):
+            image = np.array(Image.open(image_file))
+        else:
+            image = np.array(image_file)
         
-        with torch.no_grad():
-            for _ in range(mc_samples):
-                output = self.model(input_tensor)
-                output = torch.sigmoid(output) # Sigmoid for probability (0-1)
-                predictions.append(output.cpu().numpy())
-        
-        # Calculate Mean and Variance
-        predictions = np.array(predictions) # (N, 1, 1, H, W)
-        mean_pred = np.mean(predictions, axis=0)[0, 0] # (H, W)
-        variance = np.var(predictions, axis=0)[0, 0]   # (H, W)
+        if self.use_wrapper:
+            # Use YOLO wrapper's built-in uncertainty
+            mean_pred, variance = self.model.predict_with_uncertainty(image, n_passes=mc_samples)
+        else:
+            # Use custom model with MC Dropout
+            input_tensor = preprocess_image(image_file)
+            predictions = []
+            self.model.train()  # Enable Dropout
+            
+            with torch.no_grad():
+                for _ in range(mc_samples):
+                    output = self.model(input_tensor)
+                    output = torch.sigmoid(output)
+                    predictions.append(output.cpu().numpy())
+            
+            predictions = np.array(predictions)
+            mean_pred = np.mean(predictions, axis=0)[0, 0]
+            variance = np.var(predictions, axis=0)[0, 0]
         
         # Calculate Confidence Score
-        # Formula: Mean * (1 - Variance)
-        # Note: High variance reduces confidence.
-        # We compute a pixel-wise confidence map, then aggregate.
         confidence_map = mean_pred * (1 - variance)
-        
-        # Aggregate logic (e.g., take the max confidence area or average of safe zones)
-        # For simplicity, let's take the average of the top 20% confident pixels as the global score
-        # or just the mean of the map.
-        # Let's use the mean of the confidence map for the global score.
         global_score = float(np.mean(confidence_map))
         
-        # Generate Heatmap Image with overlay
-        # Pass variance and original image for RGB overlay
-        heatmap_path = generate_heatmap(mean_pred, variance, image_file)
+        # Generate Heatmap with overlay
+        heatmap_path = generate_heatmap(mean_pred, variance, image)
         
         return {
             "score": global_score,
